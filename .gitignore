@@ -1,0 +1,13 @@
+/target/
+**/*.rs.bk
+
+.vscode/
+*.swp
+*~
+
+.DS_Store
+Thumbs.db
+
+*.profraw
+*.profdata
+coverage/
