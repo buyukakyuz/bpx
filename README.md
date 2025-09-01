@@ -122,7 +122,7 @@ pub struct DspSession {
 
 ### Diff Algorithm
 
-The binary diff engine currently uses the `similar` crate with plans to experiment with other algorithms:
+The binary diff engine currently uses the `similar` crate with plans to experiment with other algorithms.
 
 ## Implementation Status
 ### Current State: Proof-of-Concept
