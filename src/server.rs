@@ -1,42 +1,42 @@
-//! HTTP/2 server implementation for DSP
+//! HTTP/2 server implementation for BPX
 
 use crate::{
-    DiffEngine, DiffFormat, DspError, ResourcePath, SessionId, StateManager, Version,
-    protocol::{DspRequest, DspResponse, ResponseBody},
+    BpxError, DiffEngine, DiffFormat, ResourcePath, SessionId, StateManager, Version,
+    protocol::{BpxRequest, BpxResponse, ResponseBody},
 };
 use async_trait::async_trait;
 use bytes::Bytes;
 use hyper::{Request, Response};
 use std::sync::Arc;
 
-/// DSP HTTP request handler
-pub async fn handle_dsp_request<B, R>(
+/// BPX HTTP request handler
+pub async fn handle_bpx_request<B, R>(
     req: Request<B>,
     state_mgr: Arc<dyn StateManager>,
     diff_engine: Arc<dyn DiffEngine>,
     resource_store: Arc<R>,
-) -> Result<Response<Bytes>, DspError>
+) -> Result<Response<Bytes>, BpxError>
 where
     B: http_body::Body + Send + 'static,
     R: ResourceStore + 'static,
 {
-    // Parse DSP headers from request
-    let dsp_request = parse_dsp_request(&req)?;
+    // Parse BPX headers from request
+    let bpx_request = parse_bpx_request(&req)?;
 
     // Fetch current resource
-    let current_content = resource_store.get_resource(&dsp_request.path).await?;
+    let current_content = resource_store.get_resource(&bpx_request.path).await?;
 
     let current_version = Version::from_content(&current_content);
 
     // Get or create session
     let session_id = state_mgr
-        .get_or_create_session(dsp_request.session_id.clone())
+        .get_or_create_session(bpx_request.session_id.clone())
         .await;
 
     // Check if client has compatible state and we should send diff
-    let should_send_diff = if let Some(base_version) = &dsp_request.base_version {
+    let should_send_diff = if let Some(base_version) = &bpx_request.base_version {
         // Client has state, check if we can compute diff
-        if let Some(stored_version) = state_mgr.get_version(&session_id, &dsp_request.path).await {
+        if let Some(stored_version) = state_mgr.get_version(&session_id, &bpx_request.path).await {
             // Only send diff if client's base version matches what we have stored
             // AND the current content is actually different
             let versions_match = &stored_version == base_version;
@@ -52,11 +52,11 @@ where
 
     let response = if should_send_diff {
         // Get the base version content from state manager for diff computation
-        let base_version = dsp_request.base_version.as_ref().unwrap();
+        let base_version = bpx_request.base_version.as_ref().unwrap();
 
         // Try to get base content from resource store
         match resource_store
-            .get_resource_version(&dsp_request.path, base_version)
+            .get_resource_version(&bpx_request.path, base_version)
             .await
         {
             Ok(base_content) => {
@@ -64,36 +64,36 @@ where
                 match diff_engine.compute_diff(&base_content, &current_content) {
                     Ok(diff_data) => {
                         if diff_engine.is_diff_worthwhile(current_content.len(), diff_data.len()) {
-                            DspResponse::diff(
+                            BpxResponse::diff(
                                 current_version.clone(),
                                 DiffFormat::BinaryDelta,
                                 diff_data,
                             )
                             .with_session(session_id.clone())
                         } else {
-                            DspResponse::full(current_version.clone(), current_content.clone())
+                            BpxResponse::full(current_version.clone(), current_content.clone())
                                 .with_session(session_id.clone())
                         }
                     }
                     Err(e) => {
                         eprintln!("Diff computation failed: {}", e);
-                        DspResponse::full(current_version.clone(), current_content.clone())
+                        BpxResponse::full(current_version.clone(), current_content.clone())
                             .with_session(session_id.clone())
                     }
                 }
             }
-            Err(_) => DspResponse::full(current_version.clone(), current_content.clone())
+            Err(_) => BpxResponse::full(current_version.clone(), current_content.clone())
                 .with_session(session_id.clone()),
         }
     } else {
         // Send full content
-        DspResponse::full(current_version.clone(), current_content.clone())
+        BpxResponse::full(current_version.clone(), current_content.clone())
             .with_session(session_id.clone())
     };
 
     // Update stored version for future requests (store both in state manager and resource store)
     state_mgr
-        .set_version(&session_id, &dsp_request.path, current_version.clone())
+        .set_version(&session_id, &bpx_request.path, current_version.clone())
         .await;
 
     // Store current content version in resource store for future diff operations
@@ -103,7 +103,7 @@ where
         .downcast_ref::<crate::server::InMemoryResourceStore>()
     {
         concrete_store.store_version(
-            dsp_request.path.clone(),
+            bpx_request.path.clone(),
             current_version.clone(),
             current_content.clone(),
         );
@@ -115,22 +115,22 @@ where
     ))
 }
 
-/// Parse DSP request from HTTP headers
-fn parse_dsp_request<B>(req: &Request<B>) -> Result<DspRequest, DspError> {
+/// Parse BPX request from HTTP headers
+fn parse_bpx_request<B>(req: &Request<B>) -> Result<BpxRequest, BpxError> {
     let path = ResourcePath::new(req.uri().path().to_string());
-    let mut dsp_request = DspRequest::new(path);
+    let mut bpx_request = BpxRequest::new(path);
 
     // Parse session header
-    if let Some(session_header) = req.headers().get("X-DSP-Session") {
+    if let Some(session_header) = req.headers().get("X-BPX-Session") {
         if let Ok(session_str) = session_header.to_str() {
-            dsp_request = dsp_request.with_session(SessionId::new(session_str.to_string()));
+            bpx_request = bpx_request.with_session(SessionId::new(session_str.to_string()));
         }
     }
 
     // Parse base version header
     if let Some(version_header) = req.headers().get("X-Base-Version") {
         if let Ok(version_str) = version_header.to_str() {
-            dsp_request = dsp_request.with_base_version(Version::new(version_str.to_string()));
+            bpx_request = bpx_request.with_base_version(Version::new(version_str.to_string()));
         }
     }
 
@@ -142,27 +142,27 @@ fn parse_dsp_request<B>(req: &Request<B>) -> Result<DspRequest, DspError> {
                 .filter_map(|s| DiffFormat::from_str(s.trim()))
                 .collect();
             if !formats.is_empty() {
-                dsp_request = dsp_request.with_formats(formats);
+                bpx_request = bpx_request.with_formats(formats);
             }
         }
     }
 
-    Ok(dsp_request)
+    Ok(bpx_request)
 }
 
-/// Build HTTP response from DSP response with original size info
+/// Build HTTP response from BPX response with original size info
 fn build_http_response_with_original_size(
-    dsp_response: DspResponse,
+    bpx_response: BpxResponse,
     original_size: usize,
 ) -> Response<Bytes> {
     let mut response =
-        Response::builder().header("X-Resource-Version", dsp_response.version.to_string());
+        Response::builder().header("X-Resource-Version", bpx_response.version.to_string());
 
-    if let Some(session_id) = &dsp_response.session_id {
-        response = response.header("X-DSP-Session", session_id.to_string());
+    if let Some(session_id) = &bpx_response.session_id {
+        response = response.header("X-BPX-Session", session_id.to_string());
     }
 
-    match &dsp_response.body {
+    match &bpx_response.body {
         ResponseBody::Full(content) => {
             response = response
                 .header("X-Diff-Type", "full")
@@ -176,12 +176,12 @@ fn build_http_response_with_original_size(
         }
     }
 
-    if let Some(cache_ttl) = dsp_response.cache_ttl {
-        response = response.header("X-DSP-Cache-TTL", cache_ttl.as_secs().to_string());
+    if let Some(cache_ttl) = bpx_response.cache_ttl {
+        response = response.header("X-BPX-Cache-TTL", cache_ttl.as_secs().to_string());
     }
 
     response
-        .body(dsp_response.body.as_bytes().clone())
+        .body(bpx_response.body.as_bytes().clone())
         .unwrap_or_else(|_| Response::new(Bytes::new()))
 }
 
@@ -189,14 +189,14 @@ fn build_http_response_with_original_size(
 #[async_trait]
 pub trait ResourceStore: Send + Sync {
     /// Get current version of a resource
-    async fn get_resource(&self, path: &ResourcePath) -> Result<Bytes, DspError>;
+    async fn get_resource(&self, path: &ResourcePath) -> Result<Bytes, BpxError>;
 
     /// Get specific version of a resource
     async fn get_resource_version(
         &self,
         path: &ResourcePath,
         version: &Version,
-    ) -> Result<Bytes, DspError>;
+    ) -> Result<Bytes, BpxError>;
 
     /// Get as Any for downcasting to concrete types
     fn as_any(&self) -> &dyn std::any::Any;
@@ -278,11 +278,11 @@ impl Default for InMemoryResourceStore {
 
 #[async_trait]
 impl ResourceStore for InMemoryResourceStore {
-    async fn get_resource(&self, path: &ResourcePath) -> Result<Bytes, DspError> {
+    async fn get_resource(&self, path: &ResourcePath) -> Result<Bytes, BpxError> {
         self.resources
             .get(&path.to_string())
             .map(|entry| entry.value().clone())
-            .ok_or_else(|| DspError::ClientStateNotFound {
+            .ok_or_else(|| BpxError::ClientStateNotFound {
                 client_id: SessionId::new(format!("resource:{}", path)),
             })
     }
@@ -291,7 +291,7 @@ impl ResourceStore for InMemoryResourceStore {
         &self,
         path: &ResourcePath,
         version: &Version,
-    ) -> Result<Bytes, DspError> {
+    ) -> Result<Bytes, BpxError> {
         let path_str = path.to_string();
         let version_str = version.to_string();
 
@@ -299,11 +299,11 @@ impl ResourceStore for InMemoryResourceStore {
             versions
                 .get(&version_str)
                 .map(|entry| entry.value().clone())
-                .ok_or_else(|| DspError::ClientStateNotFound {
+                .ok_or_else(|| BpxError::ClientStateNotFound {
                     client_id: SessionId::new(format!("{}@{}", path, version)),
                 })
         } else {
-            Err(DspError::ClientStateNotFound {
+            Err(BpxError::ClientStateNotFound {
                 client_id: SessionId::new(format!("{}@{}", path, version)),
             })
         }
@@ -319,51 +319,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_dsp_request() {
+    fn test_parse_bpx_request() {
         let req = Request::builder()
             .uri("/api/test")
-            .header("X-DSP-Session", "sess_123")
+            .header("X-BPX-Session", "sess_123")
             .header("X-Base-Version", "v:456")
             .header("Accept-Diff", "binary-delta,json-patch")
             .body(())
             .unwrap();
 
-        let dsp_req = parse_dsp_request(&req).unwrap();
+        let bpx_req = parse_bpx_request(&req).unwrap();
 
-        assert_eq!(dsp_req.path.to_string(), "/api/test");
-        assert_eq!(dsp_req.session_id.as_ref().unwrap().to_string(), "sess_123");
-        assert_eq!(dsp_req.base_version.as_ref().unwrap().to_string(), "v:456");
-        assert_eq!(dsp_req.accepted_formats.len(), 2);
-        assert_eq!(dsp_req.preferred_format(), Some(DiffFormat::BinaryDelta));
+        assert_eq!(bpx_req.path.to_string(), "/api/test");
+        assert_eq!(bpx_req.session_id.as_ref().unwrap().to_string(), "sess_123");
+        assert_eq!(bpx_req.base_version.as_ref().unwrap().to_string(), "v:456");
+        assert_eq!(bpx_req.accepted_formats.len(), 2);
+        assert_eq!(bpx_req.preferred_format(), Some(DiffFormat::BinaryDelta));
     }
 
     #[test]
-    fn test_parse_dsp_request_minimal() {
+    fn test_parse_bpx_request_minimal() {
         let req = Request::builder().uri("/api/minimal").body(()).unwrap();
 
-        let dsp_req = parse_dsp_request(&req).unwrap();
-
-        assert_eq!(dsp_req.path.to_string(), "/api/minimal");
-        assert!(dsp_req.session_id.is_none());
-        assert!(dsp_req.base_version.is_none());
-        assert_eq!(dsp_req.accepted_formats, vec![DiffFormat::BinaryDelta]); // default
+        let bpx_req = parse_bpx_request(&req).unwrap();
+        assert_eq!(bpx_req.path.to_string(), "/api/minimal");
+        assert!(bpx_req.session_id.is_none());
+        assert!(bpx_req.base_version.is_none());
+        assert_eq!(bpx_req.accepted_formats, vec![DiffFormat::BinaryDelta]); // default
     }
 
     #[test]
-    fn test_parse_dsp_request_invalid_headers() {
+    fn test_parse_bpx_request_invalid_headers() {
         let req = Request::builder()
             .uri("/api/test")
-            .header("X-DSP-Session", "sess_123")
+            .header("X-BPX-Session", "sess_123")
             .header("X-Base-Version", "v:456")
             .header("Accept-Diff", "invalid-format,json-patch")
             .body(())
             .unwrap();
 
-        let dsp_req = parse_dsp_request(&req).unwrap();
+        let bpx_req = parse_bpx_request(&req).unwrap();
 
         // Should ignore invalid format and keep valid ones
-        assert_eq!(dsp_req.accepted_formats.len(), 1);
-        assert_eq!(dsp_req.preferred_format(), Some(DiffFormat::JsonPatch));
+        assert_eq!(bpx_req.accepted_formats.len(), 1);
+        assert_eq!(bpx_req.preferred_format(), Some(DiffFormat::JsonPatch));
     }
 
     #[tokio::test]
@@ -385,7 +384,6 @@ mod tests {
         let retrieved = store.get_resource(&path).await.unwrap();
         assert_eq!(retrieved, content);
     }
-
     #[tokio::test]
     async fn test_resource_store_versioning() {
         let store = InMemoryResourceStore::new();
@@ -476,7 +474,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            DspError::ClientStateNotFound { .. }
+            BpxError::ClientStateNotFound { .. }
         ));
 
         // Get non-existent version should error
@@ -484,7 +482,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            DspError::ClientStateNotFound { .. }
+            BpxError::ClientStateNotFound { .. }
         ));
     }
 
@@ -504,7 +502,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            DspError::ClientStateNotFound { .. }
+            BpxError::ClientStateNotFound { .. }
         ));
     }
 

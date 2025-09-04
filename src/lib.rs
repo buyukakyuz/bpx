@@ -1,4 +1,4 @@
-//! # Differential Sync Protocol (DSP)
+//! # Binary Patch Exchange (BPX)
 //!
 //! A bandwidth-optimized HTTP/2 protocol that tracks client state server-side and transmits
 //! only binary diffs instead of full payloads, reducing bandwidth usage for
@@ -6,19 +6,19 @@
 //!
 //! ## Core Components
 //!
-//! - [`DspServer`] - Main server implementation
+//! - [`BpxServer`] - Main server implementation
 //! - [`DiffEngine`] - Binary diff computation and application
 //! - [`StateManager`] - Client state tracking and management
-//! - [`DspConfig`] - Configuration options
+//! - [`BpxConfig`] - Configuration options
 //!
 //! ## Example Usage
 //!
 //! ```rust
-//! use dsp::{DspServer, DspConfig};
+//! use bpx::{BpxServer, BpxConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let server = DspServer::builder()
-//!     .config(DspConfig::default())
+//! let server = BpxServer::builder()
+//!     .config(BpxConfig::default())
 //!     .build()?;
 //! # Ok(())
 //! # }
@@ -43,7 +43,7 @@ pub mod server;
 pub mod state;
 
 pub use diff::DiffEngine;
-pub use protocol::{DspRequest, DspResponse, ResponseBody};
+pub use protocol::{BpxRequest, BpxResponse, ResponseBody};
 pub use server::{InMemoryResourceStore, ResourceStore};
 pub use state::StateManager;
 
@@ -163,7 +163,7 @@ impl DiffFormat {
 }
 
 /// Client session for tracking resource versions and state
-pub struct DspSession {
+pub struct BpxSession {
     /// Unique session identifier
     pub id: SessionId,
     /// Resource versions tracked for this session
@@ -174,7 +174,7 @@ pub struct DspSession {
     pub memory_usage: AtomicUsize,
 }
 
-impl DspSession {
+impl BpxSession {
     /// Create a new session
     pub fn new(id: SessionId) -> Self {
         Self {
@@ -196,9 +196,9 @@ impl DspSession {
     }
 }
 
-/// Configuration for DSP server
+/// Configuration for BPX server
 #[derive(Debug, Clone)]
-pub struct DspConfig {
+pub struct BpxConfig {
     /// Maximum sessions to track concurrently
     pub max_sessions: usize,
     /// Maximum resources tracked per session
@@ -213,7 +213,7 @@ pub struct DspConfig {
     pub cleanup_interval: Duration,
 }
 
-impl Default for DspConfig {
+impl Default for BpxConfig {
     fn default() -> Self {
         Self {
             max_sessions: 100_000,
@@ -226,9 +226,9 @@ impl Default for DspConfig {
     }
 }
 
-/// Main DSP errors
+/// Main BPX errors
 #[derive(Debug, Error)]
-pub enum DspError {
+pub enum BpxError {
     /// Client state not found
     #[error("Client state not found: {client_id}")]
     ClientStateNotFound {
@@ -269,30 +269,30 @@ pub enum DspError {
     },
 }
 
-/// DSP server implementation
-pub struct DspServer {
-    config: DspConfig,
+/// BPX server implementation
+pub struct BpxServer {
+    config: BpxConfig,
     state_manager: Arc<dyn StateManager>,
     diff_engine: Arc<dyn DiffEngine>,
 }
 
-impl DspServer {
-    /// Create a new DSP server builder
-    pub fn builder() -> DspServerBuilder {
-        DspServerBuilder::new()
+impl BpxServer {
+    /// Create a new BPX server builder
+    pub fn builder() -> BpxServerBuilder {
+        BpxServerBuilder::new()
     }
 
-    /// Handle a DSP request
+    /// Handle a BPX request
     pub async fn handle_request<B, R>(
         &self,
         req: Request<B>,
         resource_store: Arc<R>,
-    ) -> Result<Response<Bytes>, DspError>
+    ) -> Result<Response<Bytes>, BpxError>
     where
         B: http_body::Body + Send + 'static,
         R: ResourceStore + 'static,
     {
-        server::handle_dsp_request(
+        server::handle_bpx_request(
             req,
             Arc::clone(&self.state_manager),
             Arc::clone(&self.diff_engine),
@@ -302,7 +302,7 @@ impl DspServer {
     }
 
     /// Get server configuration
-    pub fn config(&self) -> &DspConfig {
+    pub fn config(&self) -> &BpxConfig {
         &self.config
     }
 
@@ -322,14 +322,14 @@ impl DspServer {
     }
 }
 
-/// Builder for configuring DSP server
-pub struct DspServerBuilder {
-    config: Option<DspConfig>,
+/// Builder for configuring BPX server
+pub struct BpxServerBuilder {
+    config: Option<BpxConfig>,
     state_manager: Option<Arc<dyn StateManager>>,
     diff_engine: Option<Arc<dyn DiffEngine>>,
 }
 
-impl DspServerBuilder {
+impl BpxServerBuilder {
     fn new() -> Self {
         Self {
             config: None,
@@ -339,7 +339,7 @@ impl DspServerBuilder {
     }
 
     /// Set server configuration
-    pub fn config(mut self, config: DspConfig) -> Self {
+    pub fn config(mut self, config: BpxConfig) -> Self {
         self.config = Some(config);
         self
     }
@@ -356,23 +356,23 @@ impl DspServerBuilder {
         self
     }
 
-    /// Build the DSP server
-    pub fn build(self) -> Result<DspServer, DspError> {
+    /// Build the BPX server
+    pub fn build(self) -> Result<BpxServer, BpxError> {
         let config = self.config.unwrap_or_default();
 
         let state_manager = self
             .state_manager
-            .ok_or_else(|| DspError::DiffComputationFailed {
+            .ok_or_else(|| BpxError::DiffComputationFailed {
                 reason: "State manager not provided".to_string(),
             })?;
 
         let diff_engine = self
             .diff_engine
-            .ok_or_else(|| DspError::DiffComputationFailed {
+            .ok_or_else(|| BpxError::DiffComputationFailed {
                 reason: "Diff engine not provided".to_string(),
             })?;
 
-        Ok(DspServer {
+        Ok(BpxServer {
             config,
             state_manager,
             diff_engine,
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_session_expiration() {
-        let mut session = DspSession::new(SessionId::new("test".to_string()));
+        let mut session = BpxSession::new(SessionId::new("test".to_string()));
         let ttl = Duration::from_millis(100);
 
         assert!(!session.is_expired(ttl));
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         assert_eq!(config.max_sessions, 100_000);
         assert_eq!(config.max_resources_per_session, 1_000);
         assert_eq!(config.session_ttl, Duration::from_secs(24 * 60 * 60));
@@ -445,16 +445,16 @@ mod tests {
     }
 
     #[test]
-    fn test_dsp_server_builder_with_components() {
+    fn test_bpx_server_builder_with_components() {
         use crate::diff::similar::SimilarDiffEngine;
         use crate::state::InMemoryStateManager;
 
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_manager: Arc<dyn StateManager> =
             Arc::new(InMemoryStateManager::new(config.clone()));
         let diff_engine: Arc<dyn DiffEngine> = Arc::new(SimilarDiffEngine::new());
 
-        let server = DspServer::builder()
+        let server = BpxServer::builder()
             .config(config.clone())
             .state_manager(state_manager.clone())
             .diff_engine(diff_engine.clone())
@@ -467,70 +467,70 @@ mod tests {
     }
 
     #[test]
-    fn test_dsp_server_builder_missing_state_manager() {
+    fn test_bpx_server_builder_missing_state_manager() {
         use crate::diff::similar::SimilarDiffEngine;
 
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let diff_engine: Arc<dyn DiffEngine> = Arc::new(SimilarDiffEngine::new());
 
-        let result = DspServer::builder()
+        let result = BpxServer::builder()
             .config(config)
             .diff_engine(diff_engine)
             .build();
 
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(matches!(e, DspError::DiffComputationFailed { .. }));
+            assert!(matches!(e, BpxError::DiffComputationFailed { .. }));
         }
     }
 
     #[test]
-    fn test_dsp_server_builder_missing_diff_engine() {
+    fn test_bpx_server_builder_missing_diff_engine() {
         use crate::state::InMemoryStateManager;
 
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_manager: Arc<dyn StateManager> =
             Arc::new(InMemoryStateManager::new(config.clone()));
 
-        let result = DspServer::builder()
+        let result = BpxServer::builder()
             .config(config)
             .state_manager(state_manager)
             .build();
 
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(matches!(e, DspError::DiffComputationFailed { .. }));
+            assert!(matches!(e, BpxError::DiffComputationFailed { .. }));
         }
     }
 
     #[test]
-    fn test_dsp_server_builder_default_config() {
+    fn test_bpx_server_builder_default_config() {
         use crate::diff::similar::SimilarDiffEngine;
         use crate::state::InMemoryStateManager;
 
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_manager: Arc<dyn StateManager> = Arc::new(InMemoryStateManager::new(config));
         let diff_engine: Arc<dyn DiffEngine> = Arc::new(SimilarDiffEngine::new());
 
         // Should use default config when not provided
-        let server = DspServer::builder()
+        let server = BpxServer::builder()
             .state_manager(state_manager)
             .diff_engine(diff_engine)
             .build()
             .unwrap();
 
         let server_config = server.config();
-        let default_config = DspConfig::default();
+        let default_config = BpxConfig::default();
         assert_eq!(server_config.max_sessions, default_config.max_sessions);
         assert_eq!(server_config.session_ttl, default_config.session_ttl);
     }
 
     #[test]
-    fn test_dsp_server_builder_custom_config() {
+    fn test_bpx_server_builder_custom_config() {
         use crate::diff::similar::SimilarDiffEngine;
         use crate::state::InMemoryStateManager;
 
-        let mut custom_config = DspConfig::default();
+        let mut custom_config = BpxConfig::default();
         custom_config.max_sessions = 50_000;
         custom_config.session_ttl = Duration::from_secs(12 * 60 * 60); // 12 hours
         custom_config.min_compression_ratio = 0.3;
@@ -539,7 +539,7 @@ mod tests {
             Arc::new(InMemoryStateManager::new(custom_config.clone()));
         let diff_engine: Arc<dyn DiffEngine> = Arc::new(SimilarDiffEngine::new());
 
-        let server = DspServer::builder()
+        let server = BpxServer::builder()
             .config(custom_config.clone())
             .state_manager(state_manager)
             .diff_engine(diff_engine)
@@ -553,9 +553,9 @@ mod tests {
     }
 
     #[test]
-    fn test_dsp_session_new_and_touch() {
+    fn test_bpx_session_new_and_touch() {
         let session_id = SessionId::new("test_session".to_string());
-        let mut session = DspSession::new(session_id.clone());
+        let mut session = BpxSession::new(session_id.clone());
 
         assert_eq!(session.id, session_id);
         assert_eq!(session.resources.len(), 0);
@@ -576,9 +576,9 @@ mod tests {
     }
 
     #[test]
-    fn test_dsp_session_expiration() {
+    fn test_bpx_session_expiration() {
         let session_id = SessionId::new("test_session".to_string());
-        let session = DspSession::new(session_id);
+        let session = BpxSession::new(session_id);
         let very_short_ttl = Duration::from_millis(1);
         let long_ttl = Duration::from_secs(3600);
 
@@ -593,9 +593,9 @@ mod tests {
     }
 
     #[test]
-    fn test_dsp_session_resource_management() {
+    fn test_bpx_session_resource_management() {
         let session_id = SessionId::new("test_session".to_string());
-        let session = DspSession::new(session_id);
+        let session = BpxSession::new(session_id);
 
         let path1 = ResourcePath::new("/api/users".to_string());
         let path2 = ResourcePath::new("/api/orders".to_string());

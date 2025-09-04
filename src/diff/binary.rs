@@ -9,13 +9,13 @@
 //!
 //! Operations:
 //! - 0x01: COPY(offset: u32, length: u24) - copy from old version
-//! - 0x02: INSERT(length: u24, data: [u8]) - insert new data  
+//! - 0x02: INSERT(length: u24, data: [u8]) - insert new data
 //! - 0x03: DELETE(length: u24) - skip bytes from old version
 //! - 0x04: END - end of diff stream
 //!
 //! # Example
 //! ```
-//! use dsp::diff::{BinaryDiffCodec, DiffOperation};
+//! use bpx::diff::{BinaryDiffCodec, DiffOperation};
 //!
 //! let operations = vec![
 //!     DiffOperation::Copy { offset: 0, length: 9 },
@@ -46,7 +46,7 @@ pub enum DiffOperation {
     },
     /// Insert new data
     Insert(Vec<u8>),
-    /// Delete/skip bytes from old version  
+    /// Delete/skip bytes from old version
     Delete {
         /// Number of bytes to skip/delete
         length: u32,
@@ -55,7 +55,6 @@ pub enum DiffOperation {
 
 /// Binary diff encoder/decoder
 pub struct BinaryDiffCodec;
-
 impl BinaryDiffCodec {
     /// Encode diff operations to binary format
     ///
@@ -63,7 +62,7 @@ impl BinaryDiffCodec {
     /// * `operations` - List of diff operations to encode
     ///
     /// # Returns
-    /// Binary diff data following DSP wire format
+    /// Binary diff data following BPX wire format
     pub fn encode_diff(operations: &[DiffOperation]) -> Result<Bytes, DiffError> {
         let mut buf = BytesMut::new();
 
@@ -112,8 +111,8 @@ impl BinaryDiffCodec {
 
     /// Decode binary diff data to operations
     ///
-    /// # Arguments  
-    /// * `diff_data` - Binary diff data following DSP wire format
+    /// # Arguments
+    /// * `diff_data` - Binary diff data following BPX wire format
     ///
     /// # Returns
     /// List of decoded diff operations

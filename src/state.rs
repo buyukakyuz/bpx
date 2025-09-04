@@ -1,6 +1,6 @@
 //! Client state management
 
-use crate::{DspConfig, DspSession, ResourcePath, SessionId, Version};
+use crate::{BpxConfig, BpxSession, ResourcePath, SessionId, Version};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -24,13 +24,13 @@ pub trait StateManager: Send + Sync {
 
 /// In-memory state manager implementation
 pub struct InMemoryStateManager {
-    sessions: DashMap<SessionId, Arc<RwLock<DspSession>>>,
-    config: DspConfig,
+    sessions: DashMap<SessionId, Arc<RwLock<BpxSession>>>,
+    config: BpxConfig,
 }
 
 impl InMemoryStateManager {
     /// Create new in-memory state manager
-    pub fn new(config: DspConfig) -> Self {
+    pub fn new(config: BpxConfig) -> Self {
         Self {
             sessions: DashMap::new(),
             config,
@@ -53,7 +53,7 @@ impl StateManager for InMemoryStateManager {
                 } else {
                     // Session expired or doesn't exist, create new one
                     let new_id = SessionId::generate();
-                    let session = Arc::new(RwLock::new(DspSession::new(new_id.clone())));
+                    let session = Arc::new(RwLock::new(BpxSession::new(new_id.clone())));
                     self.sessions.insert(new_id.clone(), session);
                     new_id
                 }
@@ -61,7 +61,7 @@ impl StateManager for InMemoryStateManager {
             None => {
                 // First request, create new session
                 let new_id = SessionId::generate();
-                let session = Arc::new(RwLock::new(DspSession::new(new_id.clone())));
+                let session = Arc::new(RwLock::new(BpxSession::new(new_id.clone())));
                 self.sessions.insert(new_id.clone(), session);
                 new_id
             }
@@ -99,7 +99,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_or_create_session_new() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         // First request without session ID should create new session
@@ -110,7 +110,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_or_create_session_existing() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         // Create initial session
@@ -128,7 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_or_create_session_nonexistent() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         let fake_session = SessionId::new("fake_session".to_string());
@@ -143,7 +143,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_tracking() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         let session_id = state_mgr.get_or_create_session(None).await;
@@ -166,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_tracking_multiple_resources() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         let session_id = state_mgr.get_or_create_session(None).await;
@@ -196,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_overwrite() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         let session_id = state_mgr.get_or_create_session(None).await;
@@ -225,7 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_version_nonexistent_session() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         let fake_session = SessionId::new("fake_session".to_string());
@@ -238,7 +238,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_version_nonexistent_session() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         let fake_session = SessionId::new("fake_session".to_string());
@@ -254,7 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_touch_on_access() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = InMemoryStateManager::new(config);
 
         // Create session
@@ -287,7 +287,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_cleanup_expired_sessions() {
-        let mut config = DspConfig::default();
+        let mut config = BpxConfig::default();
         config.session_ttl = Duration::from_millis(50); // Very short TTL for testing
         let state_mgr = InMemoryStateManager::new(config);
 
@@ -308,7 +308,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_cleanup_keeps_active_sessions() {
-        let mut config = DspConfig::default();
+        let mut config = BpxConfig::default();
         config.session_ttl = Duration::from_millis(100);
         let state_mgr = InMemoryStateManager::new(config);
 
@@ -337,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_session_creation() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = Arc::new(InMemoryStateManager::new(config));
 
         let mut handles = vec![];
@@ -366,7 +366,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_version_updates() {
-        let config = DspConfig::default();
+        let config = BpxConfig::default();
         let state_mgr = Arc::new(InMemoryStateManager::new(config));
 
         let session_id = state_mgr.get_or_create_session(None).await;

@@ -1,4 +1,4 @@
-//! DSP protocol types and wire format definitions
+//! BPX protocol types and wire format definitions
 
 use crate::{DiffFormat, ResourcePath, SessionId, Version};
 use bytes::Bytes;
@@ -7,9 +7,9 @@ use std::time::Duration;
 pub mod headers;
 pub mod wire;
 
-/// DSP request containing client state and preferences
+/// BPX request containing client state and preferences
 #[derive(Debug, Clone)]
-pub struct DspRequest {
+pub struct BpxRequest {
     /// Resource path being requested
     pub path: ResourcePath,
     /// Client session ID (None for first request)
@@ -20,8 +20,8 @@ pub struct DspRequest {
     pub accepted_formats: Vec<DiffFormat>,
 }
 
-impl DspRequest {
-    /// Create a new DSP request
+impl BpxRequest {
+    /// Create a new BPX request
     pub fn new(path: ResourcePath) -> Self {
         Self {
             path,
@@ -60,9 +60,9 @@ impl DspRequest {
     }
 }
 
-/// DSP response containing resource data or diff
+/// BPX response containing resource data or diff
 #[derive(Debug, Clone)]
-pub struct DspResponse {
+pub struct BpxResponse {
     /// Current resource version
     pub version: Version,
     /// Response body (full or diff)
@@ -73,7 +73,7 @@ pub struct DspResponse {
     pub session_id: Option<SessionId>,
 }
 
-impl DspResponse {
+impl BpxResponse {
     /// Create response with full resource content
     pub fn full(version: Version, content: Bytes) -> Self {
         Self {
@@ -160,12 +160,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_dsp_request_builder() {
+    fn test_bpx_request_builder() {
         let path = ResourcePath::new("/api/users/123".to_string());
         let session_id = SessionId::new("test_session".to_string());
         let version = Version::new("v1".to_string());
 
-        let request = DspRequest::new(path.clone())
+        let request = BpxRequest::new(path.clone())
             .with_session(session_id.clone())
             .with_base_version(version.clone())
             .with_formats(vec![DiffFormat::BinaryDelta, DiffFormat::JsonPatch]);
@@ -179,13 +179,13 @@ mod tests {
     }
 
     #[test]
-    fn test_dsp_response_creation() {
+    fn test_bpx_response_creation() {
         let version = Version::new("v2".to_string());
         let content = Bytes::from("test content");
         let session_id = SessionId::new("session123".to_string());
 
         // Test full response
-        let full_response = DspResponse::full(version.clone(), content.clone())
+        let full_response = BpxResponse::full(version.clone(), content.clone())
             .with_session(session_id.clone())
             .with_cache_ttl(Duration::from_secs(300));
 
@@ -198,7 +198,7 @@ mod tests {
         // Test diff response
         let diff_data = Bytes::from("diff data");
         let diff_response =
-            DspResponse::diff(version.clone(), DiffFormat::BinaryDelta, diff_data.clone());
+            BpxResponse::diff(version.clone(), DiffFormat::BinaryDelta, diff_data.clone());
 
         assert!(diff_response.is_diff());
         assert_eq!(diff_response.body_size(), diff_data.len());
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn test_request_without_state() {
         let path = ResourcePath::new("/api/test".to_string());
-        let request = DspRequest::new(path);
+        let request = BpxRequest::new(path);
 
         assert!(!request.has_client_state());
         assert_eq!(request.preferred_format(), Some(DiffFormat::BinaryDelta));

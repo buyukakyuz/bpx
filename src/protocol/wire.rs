@@ -1,4 +1,4 @@
-//! DSP wire format definitions
+//! BPX wire format definitions
 
 /// Binary diff operations
 #[repr(u8)]

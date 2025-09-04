@@ -1,27 +1,21 @@
-# Differential Sync Protocol (DSP)
+# Binary Patch Exchange (BPX)
 
-DSP is a novel bandwidth-optimization layer over HTTP/2 that reduces network payload sizes by up to 90% by sending binary diffs instead of complete resources. It maintains server-side client state to automatically compute minimal deltas between resource versions, enabling dramatic bandwidth savings for frequently-polled APIs while preserving REST's simplicity.
+BPX is a novel bandwidth-optimization layer over HTTP/2 that reduces network payload sizes by up to 90% by sending binary diffs instead of complete resources. It maintains server-side client state to automatically compute minimal deltas between resource versions, enabling dramatic bandwidth savings for frequently-polled APIs while preserving REST's simplicity.
 
 ## Technical Overview
 
-DSP addresses a fundamental inefficiency in modern web architectures: repeatedly transmitting full resources when only small portions have changed. Traditional HTTP responses contain complete resource representations, even when clients poll for updates frequently and changes are minimal.
+BPX addresses a fundamental inefficiency in modern web architectures: repeatedly transmitting full resources when only small portions have changed. Traditional HTTP responses contain complete resource representations, even when clients poll for updates frequently and changes are minimal.
 
-DSP is inspired by RFC 3229 (Delta encoding in HTTP) but takes a different approach with server-side session management and HTTP/2 integration.
+BPX is inspired by RFC 3229 (Delta encoding in HTTP) but takes a different approach with server-side session management and HTTP/2 integration.
 
 ### Core Innovation
 
-DSP introduces **stateful differential transmission** to HTTP while maintaining stateless application semantics. The protocol:
+BPX introduces **stateful differential transmission** to HTTP while maintaining stateless application semantics. The protocol:
 
 1. **Tracks client resource versions server-side** using session-based state management
 2. **Computes binary diffs** between client's cached version and current resource state  
 3. **Transmits minimal delta payloads** instead of full resource representations
 4. **Falls back gracefully** to full responses when diffs are inefficient or state is unavailable
-
-This approach achieves bandwidth reduction for use cases involving:
-- Real-time dashboards with incremental metric updates
-- Log streaming with append-only data patterns
-- Collaborative editing with small text modifications
-- Configuration polling with infrequent changes
 
 ## Protocol Specification
 
@@ -37,7 +31,7 @@ Accept-Diff: binary-delta,json-patch
 ```http
 HTTP/2 200 OK
 X-Resource-Version: v:1647892341
-X-DSP-Session: sess_abc123
+X-BPX-Session: sess_abc123
 X-Diff-Type: full
 X-Original-Size: 2048
 
@@ -47,7 +41,7 @@ X-Original-Size: 2048
 **Subsequent Request (With State):**
 ```http
 GET /api/users/123 HTTP/2
-X-DSP-Session: sess_abc123
+X-BPX-Session: sess_abc123
 X-Base-Version: v:1647892341
 Accept-Diff: binary-delta
 ```
@@ -66,21 +60,21 @@ X-Diff-Size: 127
 ### Header Specifications
 
 **Request Headers:**
-- `X-DSP-Session`: Client session identifier for state tracking
+- `X-BPX-Session`: Client session identifier for state tracking
 - `X-Base-Version`: Resource version currently held by client
 - `Accept-Diff`: Comma-separated list of supported diff formats
 
 **Response Headers:**
 - `X-Resource-Version`: Current resource version identifier
-- `X-DSP-Session`: Session ID for subsequent requests
+- `X-BPX-Session`: Session ID for subsequent requests
 - `X-Diff-Type`: Response format (`full`, `binary-delta`, `json-patch`)
 - `X-Original-Size`: Size of complete resource in bytes
 - `X-Diff-Size`: Size of transmitted diff (when applicable)
-- `X-DSP-Cache-TTL`: Client cache validity duration in seconds
+- `X-BPX-Cache-TTL`: Client cache validity duration in seconds
 
 ### Binary Diff Wire Format
 
-DSP uses a compact binary format for maximum efficiency:
+BPX uses a compact binary format for maximum efficiency:
 
 ```
 +--------+--------+----------------+
@@ -106,7 +100,7 @@ DSP uses a compact binary format for maximum efficiency:
 Sessions provide the stateful foundation enabling differential transmission:
 
 ```rust
-pub struct DspSession {
+pub struct BpxSession {
     pub id: SessionId,
     pub resources: DashMap<ResourcePath, Version>,
     pub last_accessed: Instant,
@@ -128,9 +122,22 @@ The binary diff engine currently uses the `similar` crate with plans to experime
 ### Current State: Proof-of-Concept
 
 **Implemented:**
-- Complete DSP protocol specification compliance
+- Complete BPX protocol specification compliance
 - Binary diff algorithm
 - Configurable compression thresholds and resource limits
+
+## Performance Results
+
+| Metric | Value |
+|--------|-------|
+| Total Requests | 15 |
+| Diff Responses | 5 (33%) |
+| Bytes Transferred (with BPX) | 63,087 |
+| Bytes Without BPX | 199,450 |
+| **Total Bandwidth Saved** | **136,363 bytes** |
+| **Overall Reduction** | **68.4%** |
+| Average Response Time | 5.67 ms |
+| Average Compression | 96.1% |
 
 ### Optimal Use Cases
 
@@ -160,7 +167,7 @@ The binary diff engine currently uses the `similar` crate with plans to experime
 ## Configuration
 
 ```rust
-let config = DspConfig {
+let config = BpxConfig {
     max_sessions: 100_000,              // Concurrent client sessions
     max_resources_per_session: 1_000,   // Resources tracked per client
     session_ttl: Duration::from_secs(24 * 60 * 60), // 24 hour TTL
@@ -174,10 +181,10 @@ let config = DspConfig {
 
 ### Complete Demo with Python Client
 
-The fastest way to see DSP in action is using the provided Python demonstration client:
+The fastest way to see BPX in action is using the provided Python demonstration client:
 
 ```bash
-# Terminal 1: Start DSP server
+# Terminal 1: Start BPX server
 cargo run --example server
 
 # Terminal 2: Run demo
@@ -193,9 +200,9 @@ curl -v http://127.0.0.1:3000/api/logs/server
 # 2. Trigger incremental updates  
 curl http://127.0.0.1:3000/demo/update
 
-# 3. Request with DSP headers to receive diff
+# 3. Request with BPX headers to receive diff
 curl -v \
-  -H 'X-DSP-Session: [captured-session-id]' \
+  -H 'X-BPX-Session: [captured-session-id]' \
   -H 'X-Base-Version: [captured-version]' \
   -H 'Accept-Diff: binary-delta' \
   http://127.0.0.1:3000/api/logs/server
@@ -204,28 +211,28 @@ curl -v \
 ### Integration Example
 
 ```rust
-use dsp::{DspServer, DspConfig};
-use dsp::diff::similar::SimilarDiffEngine;
-use dsp::state::InMemoryStateManager;
-use dsp::server::InMemoryResourceStore;
+use bpx::{BpxServer, BpxConfig};
+use bpx::diff::similar::SimilarDiffEngine;
+use bpx::state::InMemoryStateManager;
+use bpx::server::InMemoryResourceStore;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure DSP server
-    let config = DspConfig::default();
+    // Configure BPX server
+    let config = BpxConfig::default();
     let state_manager = Arc::new(InMemoryStateManager::new(config.clone()));
     let diff_engine = Arc::new(SimilarDiffEngine::new());
     let resource_store = Arc::new(InMemoryResourceStore::new());
     
     // Build server
-    let dsp_server = DspServer::builder()
+    let bpx_server = BpxServer::builder()
         .config(config)
         .state_manager(state_manager)
         .diff_engine(diff_engine)
         .build()?;
     
     // Handle requests
-    let response = dsp_server
+    let response = bpx_server
         .handle_request(http_request, resource_store)
         .await?;
         

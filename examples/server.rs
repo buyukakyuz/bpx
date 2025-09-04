@@ -1,10 +1,10 @@
-//! Demo DSP server
+//! Demo BPX server
 
-use bytes::Bytes;
-use dsp::{
-    DspConfig, DspServer, ResourcePath, diff::similar::SimilarDiffEngine,
+use bpx::{
+    BpxConfig, BpxServer, ResourcePath, diff::similar::SimilarDiffEngine,
     server::InMemoryResourceStore, state::InMemoryStateManager,
 };
+use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Method, Request, Response, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
@@ -59,7 +59,7 @@ fn setup_demo_resources(store: &InMemoryResourceStore) {
 
     // Simple collaborative document for testing
     let collaborative_doc = format!(
-        "{{\"document_id\":\"doc_123\",\"title\":\"Team Planning Document\",\"content\":\"Meeting notes with {} attendees discussing {} features and {} action items. This document will be updated incrementally to demonstrate DSP diff capabilities in text editing scenarios.\",\"metadata\":{{\"version\":1,\"word_count\":{},\"last_modified\":\"2024-01-15T10:00:00Z\"}}}}",
+        "{{\"document_id\":\"doc_123\",\"title\":\"Team Planning Document\",\"content\":\"Meeting notes with {} attendees discussing {} features and {} action items. This document will be updated incrementally to demonstrate BPX diff capabilities in text editing scenarios.\",\"metadata\":{{\"version\":1,\"word_count\":{},\"last_modified\":\"2024-01-15T10:00:00Z\"}}}}",
         4, 10, 12, 250
     );
 
@@ -76,7 +76,7 @@ fn setup_demo_resources(store: &InMemoryResourceStore) {
 
 async fn handle_request(
     req: Request<hyper::body::Incoming>,
-    dsp_server: Arc<DspServer>,
+    bpx_server: Arc<BpxServer>,
     resource_store: Arc<InMemoryResourceStore>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method();
@@ -89,7 +89,7 @@ async fn handle_request(
             .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             .header(
                 "Access-Control-Allow-Headers",
-                "Content-Type, X-DSP-Session, X-Base-Version, Accept-Diff",
+                "Content-Type, X-BPX-Session, X-Base-Version, Accept-Diff",
             )
             .header("Access-Control-Max-Age", "3600")
             .body(Full::new(Bytes::new()))
@@ -115,13 +115,13 @@ async fn handle_request(
                 .header("Content-Type", "application/json")
                 .header("Access-Control-Allow-Origin", "*")
                 .body(Full::new(Bytes::from(
-                    r#"{"status":"healthy","protocol":"DSP/1.0"}"#,
+                    r#"{"status":"healthy","protocol":"BPX/1.0"}"#,
                 )))
                 .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())));
             return Ok(response);
         }
         "/stats" => {
-            let config = dsp_server.config();
+            let config = bpx_server.config();
             let stats = format!(
                 r#"{{"resources":{},"versions":{},"config":{{"max_sessions":{},"session_ttl":{},"max_diff_size":{}}}}}"#,
                 resource_store.resource_count(),
@@ -139,7 +139,7 @@ async fn handle_request(
             return Ok(response);
         }
         "/demo/update" => {
-            // Incremental updates for DSP demonstration
+            // Incremental updates for BPX demonstration
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -225,8 +225,8 @@ async fn handle_request(
             // Simulate adding a comment or edit
             if updated_doc.contains("\"version\":1") {
                 updated_doc = updated_doc.replace("\"version\":1", "\"version\":2");
-                updated_doc = updated_doc.replace("demonstrate DSP diff capabilities", 
-                    &format!("demonstrate DSP diff capabilities. EDIT #{}: Added incremental change at timestamp {}", current_time % 100, current_time));
+                updated_doc = updated_doc.replace("demonstrate BPX diff capabilities", 
+                    &format!("demonstrate BPX diff capabilities. EDIT #{}: Added incremental change at timestamp {}", current_time % 100, current_time));
             } else {
                 updated_doc = updated_doc.replace(
                     "text editing scenarios",
@@ -246,15 +246,15 @@ async fn handle_request(
                 .status(200)
                 .header("Content-Type", "application/json")
                 .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(r#"{"message":"Incremental updates applied","updated":["logs","metrics","document"],"optimized_for":"DSP differential sync"}"#)))
+                .body(Full::new(Bytes::from(r#"{"message":"Incremental updates applied","updated":["logs","metrics","document"],"optimized_for":"BPX differential sync"}"#)))
                 .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())));
             return Ok(response);
         }
         _ => {}
     }
 
-    // Handle DSP requests through the integrated server
-    match dsp_server
+    // Handle BPX requests through the integrated server
+    match bpx_server
         .handle_request(req, Arc::clone(&resource_store))
         .await
     {
@@ -270,7 +270,7 @@ async fn handle_request(
             );
             response.headers_mut().insert(
                 hyper::header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                "X-Resource-Version,X-DSP-Session,X-Diff-Type,X-Original-Size,X-Diff-Size"
+                "X-Resource-Version,X-BPX-Session,X-Diff-Type,X-Original-Size,X-Diff-Size"
                     .parse()
                     .unwrap(),
             );
@@ -278,12 +278,12 @@ async fn handle_request(
             Ok(response)
         }
         Err(err) => {
-            eprintln!("DSP error for {}: {}", uri.path(), err);
+            eprintln!("BPX error for {}: {}", uri.path(), err);
             let response = Response::builder()
                 .status(500)
                 .header("Content-Type", "text/plain")
                 .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(format!("DSP Error: {}", err))))
+                .body(Full::new(Bytes::from(format!("BPX Error: {}", err))))
                 .unwrap_or_else(|_| Response::new(Full::new(Bytes::from("Internal Server Error"))));
             Ok(response)
         }
@@ -291,21 +291,21 @@ async fn handle_request(
 }
 
 /// Cleanup task that runs periodically
-async fn cleanup_task(dsp_server: Arc<DspServer>) {
+async fn cleanup_task(bpx_server: Arc<BpxServer>) {
     let mut interval = time::interval(Duration::from_secs(60)); // Every minute
 
     loop {
         interval.tick().await;
-        dsp_server.cleanup_expired_sessions().await;
+        bpx_server.cleanup_expired_sessions().await;
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("Starting DSP Server...");
+    println!("Starting BPX Server...");
 
     // Create configuration
-    let config = DspConfig {
+    let config = BpxConfig {
         max_sessions: 10_000,
         max_resources_per_session: 100,
         session_ttl: Duration::from_secs(30 * 60), // 30 minutes
@@ -324,36 +324,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Setup demo resources
     setup_demo_resources(&resource_store);
 
-    // Build DSP server
-    let dsp_server = Arc::new(
-        DspServer::builder()
+    // Build BPX server
+    let bpx_server = Arc::new(
+        BpxServer::builder()
             .config(config)
             .state_manager(state_manager)
             .diff_engine(diff_engine)
             .build()?,
     );
 
-    println!("DSP Server components initialized");
+    println!("BPX Server components initialized");
 
     // Start cleanup task
-    let cleanup_server = Arc::clone(&dsp_server);
+    let cleanup_server = Arc::clone(&bpx_server);
     tokio::spawn(async move {
         cleanup_task(cleanup_server).await;
     });
 
     // Create service
     let service = {
-        let dsp_server = Arc::clone(&dsp_server);
+        let bpx_server = Arc::clone(&bpx_server);
         let resource_store = Arc::clone(&resource_store);
 
         service_fn(move |req| {
-            handle_request(req, Arc::clone(&dsp_server), Arc::clone(&resource_store))
+            handle_request(req, Arc::clone(&bpx_server), Arc::clone(&resource_store))
         })
     };
 
     // Bind to address
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-    println!("DSP Server listening on http://127.0.0.1:3000");
+    println!("BPX Server listening on http://127.0.0.1:3000");
     println!();
     println!("Available endpoints:");
     println!("  /health              - Server health check");
@@ -364,14 +364,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("  /api/config          - App configuration");
     println!("  /api/documents/large - Large document");
     println!();
-    println!("DSP Protocol Test Commands:");
+    println!("BPX Protocol Test Commands:");
     println!();
     println!("1. Get initial resource and capture session/version:");
     println!("   curl -v http://127.0.0.1:3000/api/config");
     println!();
-    println!("2. Request with DSP headers:");
+    println!("2. Request with BPX headers:");
     println!(
-        "   curl -v -H 'X-DSP-Session: sess_abc123' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/config"
+        "   curl -v -H 'X-BPX-Session: sess_abc123' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/config"
     );
     println!();
     println!("3. Update the resource:");
@@ -379,7 +379,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!();
     println!("4. Request again with same session/version to see diff:");
     println!(
-        "   curl -v -H 'X-DSP-Session: sess_abc123' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/config"
+        "   curl -v -H 'X-BPX-Session: sess_abc123' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/config"
     );
     println!();
 

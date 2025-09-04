@@ -1,11 +1,11 @@
-//! DSP HTTP headers handling
+//! BPX HTTP headers handling
 
-/// DSP header constants
-pub struct DspHeaders;
+/// BPX header constants
+pub struct BpxHeaders;
 
-impl DspHeaders {
+impl BpxHeaders {
     /// Client session identifier
-    pub const SESSION: &'static str = "X-DSP-Session";
+    pub const SESSION: &'static str = "X-BPX-Session";
     /// Version client currently has
     pub const BASE_VERSION: &'static str = "X-Base-Version";
     /// Comma-separated diff formats client supports
@@ -19,9 +19,9 @@ impl DspHeaders {
     /// Size of diff in bytes
     pub const DIFF_SIZE: &'static str = "X-Diff-Size";
     /// How long client should cache this version (seconds)
-    pub const CACHE_TTL: &'static str = "X-DSP-Cache-TTL";
+    pub const CACHE_TTL: &'static str = "X-BPX-Cache-TTL";
 
-    /// Get all DSP header names
+    /// Get all BPX header names
     pub fn all() -> &'static [&'static str] {
         &[
             Self::SESSION,
@@ -35,8 +35,8 @@ impl DspHeaders {
         ]
     }
 
-    /// Check if a header name is a DSP header
-    pub fn is_dsp_header(name: &str) -> bool {
+    /// Check if a header name is a BPX header
+    pub fn is_bpx_header(name: &str) -> bool {
         Self::all().contains(&name)
     }
 }
