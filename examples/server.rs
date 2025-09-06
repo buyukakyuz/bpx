@@ -1,5 +1,6 @@
 //! Demo BPX server
 
+use bpx::protocol::headers::BpxHeaders;
 use bpx::{
     BpxConfig, BpxServer, ResourcePath, diff::similar::SimilarDiffEngine,
     server::InMemoryResourceStore, state::InMemoryStateManager,
@@ -268,11 +269,10 @@ async fn handle_request(
                 hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
                 "*".parse().unwrap(),
             );
+            let expose = BpxHeaders::all().join(",");
             response.headers_mut().insert(
                 hyper::header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                "X-Resource-Version,X-BPX-Session,X-Diff-Type,X-Original-Size,X-Diff-Size"
-                    .parse()
-                    .unwrap(),
+                expose.parse().unwrap(),
             );
 
             Ok(response)
@@ -292,7 +292,8 @@ async fn handle_request(
 
 /// Cleanup task that runs periodically
 async fn cleanup_task(bpx_server: Arc<BpxServer>) {
-    let mut interval = time::interval(Duration::from_secs(60)); // Every minute
+    let interval_secs = bpx_server.config().cleanup_interval.as_secs().max(1);
+    let mut interval = time::interval(Duration::from_secs(interval_secs));
 
     loop {
         interval.tick().await;
@@ -314,17 +315,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         cleanup_interval: Duration::from_secs(60),
     };
 
-    // Create components
     let state_manager = Arc::new(InMemoryStateManager::new(config.clone()));
     let diff_engine = Arc::new(SimilarDiffEngine::with_compression_ratio(
         config.min_compression_ratio,
     ));
     let resource_store = Arc::new(InMemoryResourceStore::new());
 
-    // Setup demo resources
     setup_demo_resources(&resource_store);
 
-    // Build BPX server
     let bpx_server = Arc::new(
         BpxServer::builder()
             .config(config)
@@ -335,13 +333,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("BPX Server components initialized");
 
-    // Start cleanup task
     let cleanup_server = Arc::clone(&bpx_server);
     tokio::spawn(async move {
         cleanup_task(cleanup_server).await;
     });
 
-    // Create service
     let service = {
         let bpx_server = Arc::clone(&bpx_server);
         let resource_store = Arc::clone(&resource_store);
@@ -351,27 +347,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         })
     };
 
-    // Bind to address
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
     println!("BPX Server listening on http://127.0.0.1:3000");
     println!();
     println!("Available endpoints:");
-    println!("  /health              - Server health check");
-    println!("  /stats               - Server statistics");
-    println!("  /demo/update         - Update config to trigger diff");
-    println!("  /api/users/123       - User profile (Alice)");
-    println!("  /api/users/456       - User profile (Bob)");
-    println!("  /api/config          - App configuration");
-    println!("  /api/documents/large - Large document");
+    println!("  /health                   - Server health check");
+    println!("  /stats                    - Server statistics");
+    println!("  /demo/update              - Apply incremental updates");
+    println!("  /api/logs/server          - Append-only log stream (great for BPX)");
+    println!("  /api/dashboard/metrics    - Live metrics (line-based demo)");
+    println!("  /api/documents/collaborative - Collaborative doc (single-line JSON)");
     println!();
     println!("BPX Protocol Test Commands:");
     println!();
     println!("1. Get initial resource and capture session/version:");
-    println!("   curl -v http://127.0.0.1:3000/api/config");
+    println!("   curl -v http://127.0.0.1:3000/api/logs/server");
     println!();
     println!("2. Request with BPX headers:");
     println!(
-        "   curl -v -H 'X-BPX-Session: sess_abc123' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/config"
+        "   curl -v -H 'X-BPX-Session: <SESSION>' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/logs/server"
     );
     println!();
     println!("3. Update the resource:");
@@ -379,7 +373,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!();
     println!("4. Request again with same session/version to see diff:");
     println!(
-        "   curl -v -H 'X-BPX-Session: sess_abc123' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/config"
+        "   curl -v -H 'X-BPX-Session: <SESSION>' -H 'X-Base-Version: <VERSION>' -H 'Accept-Diff: binary-delta' http://127.0.0.1:3000/api/logs/server"
     );
     println!();
 

@@ -1,6 +1,6 @@
 //! Binary diff format
 //!
-//! Wire Format:
+//! Wire Format (v1, sequential copy):
 //! ```text
 //! +--------+--------+----------------+
 //! | Op(1B) | Len(3B)| Data           |
@@ -8,10 +8,14 @@
 //! ```
 //!
 //! Operations:
-//! - 0x01: COPY(offset: u32, length: u24) - copy from old version
-//! - 0x02: INSERT(length: u24, data: [u8]) - insert new data
-//! - 0x03: DELETE(length: u24) - skip bytes from old version
-//! - 0x04: END - end of diff stream
+//! - 0x01: COPY(length: u24)           — copy next bytes from base (sequential)
+//! - 0x02: INSERT(length: u24, data)   — insert new data
+//! - 0x03: DELETE(length: u24)         — skip bytes from base
+//! - 0x04: END                          — end of diff stream
+//!
+//! Note: The `Copy` operation uses sequential semantics in v1 (no offset is encoded).
+//! The `offset` field in `DiffOperation::Copy` is currently ignored by the encoder/decoder
+//! and reserved for potential future non-sequential variants.
 //!
 //! # Example
 //! ```
@@ -37,7 +41,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 /// Diff operation with data
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffOperation {
-    /// Copy bytes from old version at specific offset
+    /// Copy bytes from the base version (sequential; `offset` reserved/ignored)
     Copy {
         /// Offset in the original content
         offset: u32,
@@ -69,7 +73,7 @@ impl BinaryDiffCodec {
         for op in operations {
             match op {
                 DiffOperation::Copy { offset: _, length } => {
-                    // Copy format: [op(1B), length(3B), offset(4B)]
+                    // Copy format (v1 sequential): [op(1B), length(3B)]
                     buf.put_u8(DiffOp::Copy as u8);
                     if *length > 0xFFFFFF {
                         return Err(DiffError::InvalidFormat(
@@ -77,9 +81,7 @@ impl BinaryDiffCodec {
                         ));
                     }
                     buf.put_uint(*length as u64, 3);
-                    // we don't use offset
-                    // since we're doing sequential copying. Offset would be used
-                    // for more sophisticated diff algorithms - will try Myer's soon.
+                    // `offset` is ignored in this wire version (sequential copy)
                 }
                 DiffOperation::Insert(data) => {
                     // Insert format: [op(1B), length(3B), data...]

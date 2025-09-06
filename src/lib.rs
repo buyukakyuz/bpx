@@ -294,6 +294,7 @@ impl BpxServer {
     {
         server::handle_bpx_request(
             req,
+            &self.config,
             Arc::clone(&self.state_manager),
             Arc::clone(&self.diff_engine),
             resource_store,

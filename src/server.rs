@@ -1,8 +1,8 @@
 //! HTTP/2 server implementation for BPX
 
 use crate::{
-    BpxError, DiffEngine, DiffFormat, ResourcePath, SessionId, StateManager, Version,
-    protocol::{BpxRequest, BpxResponse, ResponseBody},
+    BpxConfig, BpxError, DiffEngine, DiffFormat, ResourcePath, SessionId, StateManager, Version,
+    protocol::{BpxRequest, BpxResponse, ResponseBody, headers::BpxHeaders},
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// BPX HTTP request handler
 pub async fn handle_bpx_request<B, R>(
     req: Request<B>,
+    config: &BpxConfig,
     state_mgr: Arc<dyn StateManager>,
     diff_engine: Arc<dyn DiffEngine>,
     resource_store: Arc<R>,
@@ -33,6 +34,12 @@ where
         .get_or_create_session(bpx_request.session_id.clone())
         .await;
 
+    // Determine if client accepts any server-supported diff format (binary-delta for now)
+    let client_accepts_binary = bpx_request
+        .accepted_formats
+        .iter()
+        .any(|f| matches!(f, DiffFormat::BinaryDelta));
+
     // Check if client has compatible state and we should send diff
     let should_send_diff = if let Some(base_version) = &bpx_request.base_version {
         // Client has state, check if we can compute diff
@@ -42,7 +49,7 @@ where
             let versions_match = &stored_version == base_version;
             let content_changed = &stored_version != &current_version;
 
-            versions_match && content_changed
+            versions_match && content_changed && client_accepts_binary
         } else {
             false
         }
@@ -51,34 +58,43 @@ where
     };
 
     let response = if should_send_diff {
-        // Get the base version content from state manager for diff computation
         let base_version = bpx_request.base_version.as_ref().unwrap();
 
-        // Try to get base content from resource store
         match resource_store
             .get_resource_version(&bpx_request.path, base_version)
             .await
         {
             Ok(base_content) => {
-                // Compute diff between base and current content
-                match diff_engine.compute_diff(&base_content, &current_content) {
-                    Ok(diff_data) => {
-                        if diff_engine.is_diff_worthwhile(current_content.len(), diff_data.len()) {
-                            BpxResponse::diff(
-                                current_version.clone(),
-                                DiffFormat::BinaryDelta,
-                                diff_data,
-                            )
-                            .with_session(session_id.clone())
-                        } else {
+                // Enforce max_diff_size: if either side exceeds threshold, send full
+                if base_content.len() > config.max_diff_size
+                    || current_content.len() > config.max_diff_size
+                {
+                    BpxResponse::full(current_version.clone(), current_content.clone())
+                        .with_session(session_id.clone())
+                } else {
+                    // Compute diff between base and current content
+                    match diff_engine.compute_diff(&base_content, &current_content) {
+                        Ok(diff_data) => {
+                            if diff_engine
+                                .is_diff_worthwhile(current_content.len(), diff_data.len())
+                            {
+                                // Negotiated format is binary-delta for now
+                                BpxResponse::diff(
+                                    current_version.clone(),
+                                    DiffFormat::BinaryDelta,
+                                    diff_data,
+                                )
+                                .with_session(session_id.clone())
+                            } else {
+                                BpxResponse::full(current_version.clone(), current_content.clone())
+                                    .with_session(session_id.clone())
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Diff computation failed: {}", e);
                             BpxResponse::full(current_version.clone(), current_content.clone())
                                 .with_session(session_id.clone())
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Diff computation failed: {}", e);
-                        BpxResponse::full(current_version.clone(), current_content.clone())
-                            .with_session(session_id.clone())
                     }
                 }
             }
@@ -97,17 +113,11 @@ where
         .await;
 
     // Store current content version in resource store for future diff operations
-    // Cast to concrete type to access store_version method
-    if let Some(concrete_store) = resource_store
-        .as_any()
-        .downcast_ref::<crate::server::InMemoryResourceStore>()
-    {
-        concrete_store.store_version(
-            bpx_request.path.clone(),
-            current_version.clone(),
-            current_content.clone(),
-        );
-    }
+    resource_store.store_version(
+        bpx_request.path.clone(),
+        current_version.clone(),
+        current_content.clone(),
+    );
 
     Ok(build_http_response_with_original_size(
         response,
@@ -121,21 +131,21 @@ fn parse_bpx_request<B>(req: &Request<B>) -> Result<BpxRequest, BpxError> {
     let mut bpx_request = BpxRequest::new(path);
 
     // Parse session header
-    if let Some(session_header) = req.headers().get("X-BPX-Session") {
+    if let Some(session_header) = req.headers().get(BpxHeaders::SESSION) {
         if let Ok(session_str) = session_header.to_str() {
             bpx_request = bpx_request.with_session(SessionId::new(session_str.to_string()));
         }
     }
 
     // Parse base version header
-    if let Some(version_header) = req.headers().get("X-Base-Version") {
+    if let Some(version_header) = req.headers().get(BpxHeaders::BASE_VERSION) {
         if let Ok(version_str) = version_header.to_str() {
             bpx_request = bpx_request.with_base_version(Version::new(version_str.to_string()));
         }
     }
 
     // Parse accepted diff formats
-    if let Some(accept_header) = req.headers().get("Accept-Diff") {
+    if let Some(accept_header) = req.headers().get(BpxHeaders::ACCEPT_DIFF) {
         if let Ok(formats_str) = accept_header.to_str() {
             let formats: Vec<DiffFormat> = formats_str
                 .split(',')
@@ -155,29 +165,31 @@ fn build_http_response_with_original_size(
     bpx_response: BpxResponse,
     original_size: usize,
 ) -> Response<Bytes> {
-    let mut response =
-        Response::builder().header("X-Resource-Version", bpx_response.version.to_string());
+    let mut response = Response::builder().header(
+        BpxHeaders::RESOURCE_VERSION,
+        bpx_response.version.to_string(),
+    );
 
     if let Some(session_id) = &bpx_response.session_id {
-        response = response.header("X-BPX-Session", session_id.to_string());
+        response = response.header(BpxHeaders::SESSION, session_id.to_string());
     }
 
     match &bpx_response.body {
         ResponseBody::Full(content) => {
             response = response
-                .header("X-Diff-Type", "full")
-                .header("X-Original-Size", content.len().to_string());
+                .header(BpxHeaders::DIFF_TYPE, "full")
+                .header(BpxHeaders::ORIGINAL_SIZE, content.len().to_string());
         }
         ResponseBody::Diff { format, data } => {
             response = response
-                .header("X-Diff-Type", format.as_str())
-                .header("X-Original-Size", original_size.to_string())
-                .header("X-Diff-Size", data.len().to_string());
+                .header(BpxHeaders::DIFF_TYPE, format.as_str())
+                .header(BpxHeaders::ORIGINAL_SIZE, original_size.to_string())
+                .header(BpxHeaders::DIFF_SIZE, data.len().to_string());
         }
     }
 
     if let Some(cache_ttl) = bpx_response.cache_ttl {
-        response = response.header("X-BPX-Cache-TTL", cache_ttl.as_secs().to_string());
+        response = response.header(BpxHeaders::CACHE_TTL, cache_ttl.as_secs().to_string());
     }
 
     response
@@ -198,8 +210,8 @@ pub trait ResourceStore: Send + Sync {
         version: &Version,
     ) -> Result<Bytes, BpxError>;
 
-    /// Get as Any for downcasting to concrete types
-    fn as_any(&self) -> &dyn std::any::Any;
+    /// Store a specific version of a resource
+    fn store_version(&self, path: ResourcePath, version: Version, content: Bytes);
 }
 
 /// In-memory resource store implementation
@@ -309,8 +321,8 @@ impl ResourceStore for InMemoryResourceStore {
         }
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn store_version(&self, path: ResourcePath, version: Version, content: Bytes) {
+        Self::store_version(self, path, version, content)
     }
 }
 
@@ -506,14 +518,16 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_resource_store_as_any_downcast() {
+    #[tokio::test]
+    async fn test_resource_store_store_version_via_trait() {
         let store = InMemoryResourceStore::new();
-        let any_store = store.as_any();
+        let path = ResourcePath::new("/api/test".to_string());
+        let v1 = Version::new("v1".to_string());
+        let content = Bytes::from("v1 content");
 
-        // Should be able to downcast back to concrete type
-        assert!(any_store.is::<InMemoryResourceStore>());
-        let concrete = any_store.downcast_ref::<InMemoryResourceStore>();
-        assert!(concrete.is_some());
+        // Store via trait method and then retrieve
+        ResourceStore::store_version(&store, path.clone(), v1.clone(), content.clone());
+        let retrieved = store.get_resource_version(&path, &v1).await.unwrap();
+        assert_eq!(retrieved, content);
     }
 }
